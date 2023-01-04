@@ -19,11 +19,12 @@ from sklearn.tree import export_graphviz
 import pydotplus
 
 
-plt.rcParams.update({'font.size': 16})
+plt.rcParams.update({'font.size': 14})
 
-LR = 0.002
+
+LR = 0.0003
 Gamma_Scheduler=0.999945
-Nepoch = 200
+Nepoch = 1500
 split_train_valid_test = 0.8
 N_batch_size = 20
 
@@ -34,12 +35,26 @@ class DataSet:
 
 
 def plot_roc_curve(fper, tper):
-    for el in range(len(fper)):
-        plt.plot(fper[el], tper[el], label=f'{el}')
+    fper, tper = fper[0], tper[0]
+    #for el in range(len(fper)):
+    plt.plot(fper, tper)
+    maxindex = 0
+    max_ = 0
+    averx,avery = 0,0
+    for i in range(6,len(fper)):
+    	if fper[i] < 0.35: continue
+    	if tper[i]/fper[i] > max_: 
+    		maxindex = i
+    		max_ = tper[i]/fper[i]
+    		print(max_)
+    print(' -------------------------------------------- the best perfoance at ',maxindex,fper[maxindex],tper[maxindex])
+    
     plt.plot([0, 1], [0, 1], color='green', linestyle='--')
     plt.xlabel('Rate of incorrect recognition of health people')
-    plt.ylabel('Rate of correct recognition of schizo')
+    plt.ylabel('Rate of correct recognition of patients')
     plt.title('Receiver Operating Characteristic Curve')
+    plt.plot([fper[maxindex]],[tper[maxindex]],marker='*', markersize=15)
+    return (fper[maxindex],tper[maxindex])
 
 
 def cross_valid(len,train_ratio = 0.8):
@@ -93,9 +108,12 @@ def BLE(x,y):
     res = -1/2*(y*torch.log(x) + (1-y)*torch.log(1-x))
     return res
 
+
+
+
 class NNModel(nn.Module):
     '''Neural network model used in the classification'''
-    def __init__(self,len):
+    def __init__(self,len, logist = True):
         super().__init__()
         self.linear2 = nn.Linear(len, int(len))
         self.linear3 = nn.Linear(int(len), int(len/2))
@@ -103,14 +121,21 @@ class NNModel(nn.Module):
         self.lastlayer = nn.Linear(int(len/3), 1)
         self.activation = nn.ReLU()
         self.activation1 = nn.Sigmoid()
+        self.logist = logist 
+        self.linear_logist = nn.Linear(len, 1)
 
     def forward(self, x):
+        if self.logist:
+            btv = self.activation1(self.linear_logist(x))
+            return btv
         out2 = self.activation(self.linear2(x))
         out3 = self.activation(self.linear3(out2))
         out4 = self.activation(self.linear4(out3))
         out5 = self.lastlayer(out4)
         out6 = self.activation1(out5)
         return out6
+        
+        
 
 def low_correlation(dataset):
     colum = list(set(dataset.columns) - set(['res']))
@@ -252,7 +277,7 @@ def draw_correlation(df):
     plt.show()
 
 
-def perform(name_save, input_tensor, label_tensor):
+def perform(name_save, input_tensor, label_tensor, logist = False):
 
     # high_overl = overlap(df, 0.1)
     # print("high_overl = ", high_overl)
@@ -267,10 +292,10 @@ def perform(name_save, input_tensor, label_tensor):
 
     #dataset = dataset_to_torch(df, split_train_valid_test)
 
-    model1 = NNModel(input_tensor.shape[1])
+    model1 = NNModel(input_tensor.shape[1],logist = logist)
 
     criterion1 = torch.nn.MSELoss()  #  torch.nn.BCELoss() # BLE # MSE
-    optimizer1 = torch.optim.Adam(model1.parameters(), lr=LR)
+    optimizer1 = torch.optim.Adam(model1.parameters(), lr=LR, weight_decay=0.01)
     # Работа SGD в данном случае эквивалента обычному GD, так как функция ошибок и градиенты считаются для каждой строки.
     scheduler1 = torch.optim.lr_scheduler.ExponentialLR(optimizer1, gamma=Gamma_Scheduler)
 
@@ -291,7 +316,10 @@ def perform(name_save, input_tensor, label_tensor):
     stream_hist = open("results/" + name_save + ".dat",'w')
     loss_v = 0
     # train_set, valid_sate
+    aver_loss = 0.25
+    break_now = False
     for epoch in range(Nepoch):
+        if break_now: break
         len_inp_tens = len(input_tensor)
         for t in np.random.choice(len_inp_tens,len_inp_tens,replace=False):
             label = label_tensor[t]
@@ -313,7 +341,7 @@ def perform(name_save, input_tensor, label_tensor):
                 cost1 = np.append(cost1, loss.item())
             lrs.append(optimizer1.param_groups[0]["lr"])
             loss.backward()
-            if aver_v == N_batch_size - 1:
+            if aver_v == N_batch_size:
                 optimizer1.step()
                 optimizer1.zero_grad()
                 scheduler1.step()
@@ -323,7 +351,11 @@ def perform(name_save, input_tensor, label_tensor):
                       'leraning rate = ', format(optimizer1.param_groups[0]["lr"], '.6f'),
                       'loss = ', format(loss.item(), '.6f'),
                       'NN_output = ', format(output.item(), '.6f'),
-                      'target = ', label.item())
+                      'target = ', label.item(), "  aver_loss = ", aver_loss)
+                aver_loss = 0.95*aver_loss + loss_v/(aver_v+1)/20.
+                if aver_loss < 0.15: 
+                    break_now = True
+                    break
                 loss_v = 0
                 aver_v = 0
 
@@ -345,12 +377,13 @@ def perform(name_save, input_tensor, label_tensor):
     return 0
 
 
-def make(df):
+def make(df, logist):
     dset = cross_valid(len(df), split_train_valid_test)
     i = 0
     for el in dset:
         set_ = dataset_to_torch(df, el[0], el[1])
-        perform(str(i), set_[0], set_[1])
+        print(set_)
+        perform(str(i), set_[0], set_[1], logist)
         i+=1
 
 def make_grad():
@@ -377,12 +410,15 @@ def make_grad():
 
 
 
-def validate(df):
+def validate(df,logist):
     dset = cross_valid(len(df), split_train_valid_test)
-    model1 = NNModel(len(df.columns) - 1)
+    model1 = NNModel(len(df.columns) - 1,logist)
     i = 0
+    min_health, max_shcizo = 0,0
+    vect0,vect1 = [],[]
     for el in dset:
         set_ = dataset_to_torch(df, el[0], el[1])
+        print(set_)
         model1.load_state_dict(torch.load(f"results/{i}.pth"))
 
         #matr = model1.parameters()
@@ -419,21 +455,34 @@ def validate(df):
         print('======================')
         #plt.hist([el.item() for el in s2[s1 == 0]], histtype='bar', bins=100, label='health')
         #plt.hist([el.item() for el in s2[s1 == 1]], histtype='step', bins=100, label='schizo')
+        [vect0.append(el.item()) for el in s2[s1 == 0]]
+        [vect1.append(el.item()) for el in s2[s1 == 1]]
         plt.legend()
         plt.xlabel('NN output')
         #plt.show()
         s2 = s2.cpu().detach().numpy()
         fper, tper, thresholds = roc_curve(s1, s2)
-        plot_roc_curve([fper], [tper])
+        mk = plot_roc_curve([fper], [tper])
+        min_health += mk[0]
+        max_shcizo += mk[1]
         i+=1
 
     plt.show()
+    plt.hist(vect0, histtype='bar', bins=50, label='health')
+    plt.hist(vect1, histtype='step', bins=50, label='patients')
+    min_health /= i
+    max_shcizo /= i
+    print('min_health = ',min_health)
+    print('max_shcizo = ',max_shcizo)
+    plt.xlabel('model output')
+    plt.ylabel('#test events')
     plt.legend()
+    plt.show()
 
 
 
 def func(x, a, b, c, d):
-    res = a + b*x# + c*x**2 + d*x**3
+    res = a + b*x # + c*x**2 + d*x**3
     return res
 
 
@@ -448,16 +497,15 @@ def draw_history():
         df = pd.read_table(f'results/{el}.dat',delimiter=' ')
         print(len(df))
         #df = df.loc[df[df.columns[1]]==0]
-        df[df.columns[0]].plot()
-
+        df[df.columns[0]].plot(style='.', xlabel = 'training batch', ylabel = 'MSE loss',markersize=4)
         print('len(df) = ',len(df))
-        xdata = df.index[-100:]
-        ydata = df[df.columns[0]][-100:].values
+        xdata = df.index[-400:]
+        ydata = df[df.columns[0]][-400:].values
         print('hello0')
         popt, pcov = curve_fit(func, xdata, ydata)
         print('hello')
         print('dddd',*popt)
-        plt.plot(xdata, func(xdata, *popt), 'r-', label = 'аппроксимация')
+        plt.plot(xdata, func(xdata, *popt), 'r-', label = 'аппроксимация',color = 'black', linewidth = 4)
     plt.show()
 
 def plot_data(df):
@@ -471,7 +519,7 @@ def plot_data(df):
 
 
 
-def make_NN():
+def make_NN(train = True, logist = False):
 
     df = process_df()
 
@@ -480,13 +528,13 @@ def make_NN():
     plt.hist(df[df.columns[7]].loc[df['res'] == 0],bins= 40, range = (-0.001,40),density=True,fc=(0.3, 0.3, 0.3, 0.36),label='health')
     plt.xlabel(df.columns[7])
     plt.legend()
-    plt.show()
+    #plt.show()
 
     #
     correlation_w_res = low_correlation(df)
     plt.bar(correlation_w_res[1],correlation_w_res[0])
     plt.xticks(rotation=45)
-    plt.show()
+    #plt.show()
     #
     plot_data(df)
     #
@@ -501,9 +549,9 @@ def make_NN():
 
     #draw_correlation(df)
     
-    make(df)
+    if train: make(df,logist)
     draw_history()
-    validate(df)
+    validate(df,logist)
     
     #print(cross_valid(10,0.8))
     
@@ -539,11 +587,23 @@ def make_DTrees():
            'IL-8 pg/ml',
            'TNFa pg/ml',
            'TNFb pg/ml']
+    
+    accur_health_,accur_health = 0,0
+    accur_schizo_, accur_schizo = 0,0
     for el in dset:
         set_ = dataset_to_torch(df, el[0], el[1])
-        clf = tree.DecisionTreeClassifier(criterion="log_loss", max_depth=4)
+        clf = tree.DecisionTreeClassifier(criterion="gini", max_depth = 8, class_weight = "balanced")
         clf = clf.fit(set_[0], set_[1])
-        print('training score = ','%.3f'%clf.score(set_[0], set_[1]),'  test score = ','%.3f'%clf.score(set_[2], set_[3]))
+        set2_0 = set_[2][set_[3] == 0]
+        set3_0 = set_[3][set_[3] == 0]
+        set2_1 = set_[2][set_[3] == 1]
+        set3_1 = set_[3][set_[3] == 1]
+        accur_health_ = clf.score(set2_0, set3_0)
+        accur_schizo_ = clf.score(set2_1, set3_1)
+        print('training score = ','%.3f'%clf.score(set_[0], set_[1]),'  test score health = ','%.3f'%accur_health_,'  test score schizo = ','%.3f'%accur_schizo_)
+        accur_health += accur_health_
+        accur_schizo += accur_schizo_
+        
         dot_data = StringIO()
         export_graphviz(clf, out_file=dot_data,  
                         filled=True, rounded=True,feature_names = fyr,
@@ -552,6 +612,12 @@ def make_DTrees():
         graph.write_png('Tree.png')
         Image(graph.create_png())
         i+=1
+    
+    accur_health /= i
+    accur_schizo /= i
+    
+    print('aver accur_health = ', accur_health)
+    print('aver accur_schizo = ', accur_schizo)
 
     bin = 0
     plt.hist(df[df.columns[bin]].loc[df['res'] == 1],bins= 40, range = (-0.001,0.05),label='shizo')
@@ -559,9 +625,20 @@ def make_DTrees():
     plt.xlabel(df.columns[bin])
     plt.yscale('log')
     plt.legend()
-    plt.show()
+    #plt.show()
 
 
-        
-make_DTrees()
-#make_NN()
+np.random.seed(136)        
+torch.manual_seed(136)
+torch.cuda.manual_seed(136)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+#make_DTrees()
+make_NN(train = True, logist = False)
+
+
+
+
+
+
+
