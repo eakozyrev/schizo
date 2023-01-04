@@ -1,6 +1,6 @@
 # schizo
 
-<< mkdir results >>
+mkdir results
 
 python analyze.py
 
