@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -14,20 +15,25 @@ from sklearn import tree
 
 #from sklearn.externals.six import StringIO
 from six import StringIO
-from IPython.display import Image  
+from IPython.display import Image
 from sklearn.tree import export_graphviz
 import pydotplus
-
+from sklearn import svm
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import classification_report
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import accuracy_score
+from sklearn.decomposition import PCA
 
 plt.rcParams.update({'font.size': 14})
 
 
 LR = 0.0003
 Gamma_Scheduler=0.999945
-Nepoch = 1500
+Nepoch = 3000#1500
 split_train_valid_test = 0.8
 N_batch_size = 20
-
+filename = 'NN.dat'
 
 class DataSet:
     def __init__(self):
@@ -162,7 +168,7 @@ def overlap(dataset,thres):
         if corr < thres: res.append(col)
     return res
 
-def preprocess_nn(df):
+def preprocess_nn(df,number):
     categorical = [df.columns[0]]
     target = 'res'
     print("================= categorical ", categorical)
@@ -175,9 +181,15 @@ def preprocess_nn(df):
            'IL-15 pg/ml', 'IL-17A pg/ml', 'IL-1RA pg/ml', 'IL-1a pg/ml', 'IL-9 pg/ml', 'IL-1b pg/ml', 'IL-2 pg/ml',
            'IL-3 pg/ml', 'IL-4 pg/ml', 'IL-5 pg/ml', 'IL-6 pg/ml', 'IL-7 pg/ml', 'IL-8 pg/ml', 'TNFa pg/ml',
            'TNFb pg/ml']
+    print(df.columns)
     rest_for_df = list(set(df.columns) - set(fyr) - set([target]))
+    #rest_for_df = ['Пол','BDNF, ng/ml','PAI-1(total), ng/ml']
     for col in rest_for_df:
         df = df.drop(col, axis=1)
+    file = open(filename, 'a+')
+    file.write(f'{df.columns[number]} ')
+    file.close()
+    if number!= -1: df = df.drop(df.columns[number], axis=1)
     df = df.astype('float')
     return df
 
@@ -207,21 +219,25 @@ def read_df(file):
 def describe(df):
     print(len(df),len(df.columns))
 
-def process_df():
+def process_df(number):
     df_schizo = read_df("data_2022.csv")
+    print('df_schizo.shape after reading from file = ',df_schizo.shape)
     df_control = read_df("data_2022_control.csv")
+    print('df_schizo.columns = ',df_schizo.columns)
     res = [1]*df_schizo.shape[0]
     df_schizo['res'] = res
     res = [0]*df_control.shape[0]
     df_control['res'] = res
     extra = set(df_schizo.columns) - set(df_control.columns)
+    print('extra = ', extra)
     for el in extra: df_schizo = df_schizo.drop(el,axis=1)
 
     extra = set(df_control.columns) - set(df_schizo.columns)
+    print('extra = ', extra)
     for el in extra: df_control = df_control.drop(el, axis=1)
 
     print(df_schizo.shape,df_control.shape)
-
+    print('df_schizo.columns = ', df_schizo.columns)
 
     print('=============================================')
 
@@ -239,15 +255,18 @@ def process_df():
 
   #  df_control = df_control[df_control_null]
   #  df_schizo = df_schizo[df_schizo_null]
+    print('combine patients and control')
     df = df_schizo.append(df_control, ignore_index=True)
 
-    df = preprocess_nn(df)
+    df = preprocess_nn(df,number)
 
     df_null = df[df.isnull().any(axis=1)]
     print('df_null.shape = ', df_null.shape)
     for el in df.columns:
         df = df.loc[df[el].notnull()]
     print('df.shape = ',df.shape)
+    print('df.columns = ',df.columns)
+    print('===================')
     #df.fillna(0,inplace=True)
 
 
@@ -313,7 +332,11 @@ def perform(name_save, input_tensor, label_tensor, logist = False):
     weight = []
     optimizer1.zero_grad()
     lrs = []
-    stream_hist = open("results/" + name_save + ".dat",'w')
+    try:
+        stream_hist = open("results/" + name_save + ".dat",'w')
+    except:
+        os.mkdir("results/")
+        stream_hist = open("results/" + name_save + ".dat", 'w')
     loss_v = 0
     # train_set, valid_sate
     aver_loss = 0.25
@@ -353,7 +376,7 @@ def perform(name_save, input_tensor, label_tensor, logist = False):
                       'NN_output = ', format(output.item(), '.6f'),
                       'target = ', label.item(), "  aver_loss = ", aver_loss)
                 aver_loss = 0.95*aver_loss + loss_v/(aver_v+1)/20.
-                if aver_loss < 0.15: 
+                if aver_loss < 0.10:
                     break_now = True
                     break
                 loss_v = 0
@@ -411,6 +434,7 @@ def make_grad():
 
 
 def validate(df,logist):
+    file = open(filename, 'a+')
     dset = cross_valid(len(df), split_train_valid_test)
     model1 = NNModel(len(df.columns) - 1,logist)
     i = 0
@@ -472,8 +496,10 @@ def validate(df,logist):
     plt.hist(vect1, histtype='step', bins=50, label='patients')
     min_health /= i
     max_shcizo /= i
-    print('min_health = ',min_health)
-    print('max_shcizo = ',max_shcizo)
+    print('inaccuracy_control = ',min_health)
+    print('accuracy_patients = ',max_shcizo)
+    file.write(f'{min_health} {max_shcizo} \n')
+    file.close()
     plt.xlabel('model output')
     plt.ylabel('#test events')
     plt.legend()
@@ -488,7 +514,7 @@ def func(x, a, b, c, d):
 
 
 def draw_history():
-    df = process_df()
+    df = process_df(-1)
     dset = cross_valid(len(df), split_train_valid_test)
 
     for el in range(len(dset)):
@@ -519,9 +545,10 @@ def plot_data(df):
 
 
 
-def make_NN(train = True, logist = False):
+def make_NN(train = True, logist = False, number=-1):
 
-    df = process_df()
+
+    df = process_df(number)
 
     #plt.xscale('log')
     plt.hist(df[df.columns[7]].loc[df['res'] == 1],bins= 40, range = (-0.001,40),density=True,label='shizo')
@@ -558,11 +585,13 @@ def make_NN(train = True, logist = False):
     #make_grad()
 
 
-def make_DTrees():
+def make_DTrees(number):
+    #file = open(filename, 'a+')
 
-    df = process_df()
+    df = process_df(number)
     df = uniform(df)
     dset = cross_valid(len(df), split_train_valid_test)
+    #file.write(f'{df.columns[number]} ')
     i = 0
     feature_cols = ['res']
     fyr = ['TGFa pg/ml',
@@ -588,37 +617,55 @@ def make_DTrees():
            'TNFa pg/ml',
            'TNFb pg/ml']
     
-    accur_health_,accur_health = 0,0
-    accur_schizo_, accur_schizo = 0,0
+    accur_health_, accur_schizo_ = 0,0
+    accur_health, accur_schizo = [],[]
+
     for el in dset:
         set_ = dataset_to_torch(df, el[0], el[1])
-        clf = tree.DecisionTreeClassifier(criterion="gini", max_depth = 8, class_weight = "balanced")
-        clf = clf.fit(set_[0], set_[1])
-        set2_0 = set_[2][set_[3] == 0]
+        n_h = len(set_[1][set_[1]==0])
+        n_sc = len(set_[1][set_[1] == 1])
+        wei = n_sc/n_h*2
+        weight = {0: wei, 1: 1}
+        clf = tree.DecisionTreeClassifier(criterion="gini", max_depth = int(len(df.columns)/2), class_weight = weight)
+
+        print('n_h = ',n_h)
+        print('n_sc = ',n_sc)
+        #clf = svm.SVC(C = 2, kernel = 'poly', class_weight=weight, max_iter = -1, degree=3)
+        #clf = KNeighborsClassifier(n_neighbors=2)
+        pca = PCA(n_components=len(df.columns)-1)  # https://stackabuse.com/implementing-pca-in-python-with-scikit-learn/
+        X_train = pca.fit_transform(set_[0])
+        #X_test = pca.transform(set_[2])
+        print(pca.explained_variance_ratio_)
+        print(pca)
+        #clf = clf.fit(set_[0], set_[1])
+        clf = clf.fit(X_train, set_[1])
+        
+        set2_0 = pca.transform(set_[2][set_[3] == 0])
         set3_0 = set_[3][set_[3] == 0]
-        set2_1 = set_[2][set_[3] == 1]
+        set2_1 = pca.transform(set_[2][set_[3] == 1])
         set3_1 = set_[3][set_[3] == 1]
         accur_health_ = clf.score(set2_0, set3_0)
         accur_schizo_ = clf.score(set2_1, set3_1)
-        print('training score = ','%.3f'%clf.score(set_[0], set_[1]),'  test score health = ','%.3f'%accur_health_,'  test score schizo = ','%.3f'%accur_schizo_)
-        accur_health += accur_health_
-        accur_schizo += accur_schizo_
-        
-        dot_data = StringIO()
-        export_graphviz(clf, out_file=dot_data,  
-                        filled=True, rounded=True,feature_names = fyr,
-                special_characters=True, class_names=['0','1'])
-        graph = pydotplus.graph_from_dot_data(dot_data.getvalue())  
-        graph.write_png('Tree.png')
-        Image(graph.create_png())
-        i+=1
-    
-    accur_health /= i
-    accur_schizo /= i
-    
-    print('aver accur_health = ', accur_health)
-    print('aver accur_schizo = ', accur_schizo)
 
+        print('training score = ','%.3f'%clf.score(X_train, set_[1]),'  test score health = ','%.3f'%accur_health_,'  test score schizo = ','%.3f'%accur_schizo_)
+        accur_health.append(accur_health_)
+        accur_schizo.append(accur_schizo_)
+
+        print(classification_report(set_[3], clf.predict(pca.transform(set_[2]))))
+        print(confusion_matrix(set_[3], clf.predict(pca.transform(set_[2]))))
+        print('===========================')
+        #dot_data = StringIO()
+        #export_graphviz(clf, out_file=dot_data,  
+        #                filled=True, rounded=True,feature_names = fyr,
+        #        special_characters=True, class_names=['0','1'])
+        #graph = pydotplus.graph_from_dot_data(dot_data.getvalue())  
+        #graph.write_png('Tree.png')
+        #Image(graph.create_png())
+        i+=1
+
+    print('inaccuracy_health = ', round(1 - np.mean(accur_health),3),'+/-',round(np.std(accur_health),3))
+    print('accuracy_schizo = ', round(np.mean(accur_schizo),3),'+/-',round(np.std(accur_schizo),3))
+    #file.write(f' {accur_health} {accur_schizo} \n')
     bin = 0
     plt.hist(df[df.columns[bin]].loc[df['res'] == 1],bins= 40, range = (-0.001,0.05),label='shizo')
     plt.hist(df[df.columns[bin]].loc[df['res'] == 0],bins= 40, range = (-0.001,0.05),fc=(0.3, 0.3, 0.3, 0.36),label='health')
@@ -626,6 +673,7 @@ def make_DTrees():
     plt.yscale('log')
     plt.legend()
     #plt.show()
+    #file.close()
 
 
 np.random.seed(136)        
@@ -633,10 +681,21 @@ torch.manual_seed(136)
 torch.cuda.manual_seed(136)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-#make_DTrees()
-make_NN(train = True, logist = False)
 
+def plot_file(name_f):
+    df = pd.read_csv(name_f,index_col=0,delimiter=' ')
+    print(df)
+    df.iloc[:,:-1].plot(kind="bar", figsize = (2, 4))
+    plt.show()
 
+if __name__=='__main__':
+    #for i in range(-1,0):
+    #    make_DTrees(i)
+    #make_DTrees(-1)
+    #for i in range(-1, 42):
+    #    make_NN(train = True, logist = False, number=i)
+    #plot_file('NN.dat')
+    make_NN(train=True, logist=False, number=-1)
 
 
 
