@@ -19,18 +19,19 @@ from IPython.display import Image
 from sklearn.tree import export_graphviz
 import pydotplus
 from sklearn import svm
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import classification_report
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import accuracy_score
 from sklearn.decomposition import PCA
 
-plt.rcParams.update({'font.size': 14})
+plt.rcParams.update({'font.size': 12})
 
 
 LR = 0.0003
 Gamma_Scheduler=0.999945
-Nepoch = 3000#1500
+Nepoch = 1500
 split_train_valid_test = 0.8
 N_batch_size = 20
 filename = 'NN.dat'
@@ -38,6 +39,22 @@ filename = 'NN.dat'
 class DataSet:
     def __init__(self):
         fyr = ['TGFa pg/ml','IFNa2 pg/ml','IFNg pg/ml','IL-10 pg/ml','IL-12P40 pg/ml','IL-12P70 pg/ml','IL-13 pg/ml','IL-15 pg/ml',	'IL-17A pg/ml',	'IL-1RA pg/ml',	'IL-1a pg/ml',	'IL-9 pg/ml', 'IL-1b pg/ml',	'IL-2 pg/ml',	'IL-3 pg/ml',	'IL-4 pg/ml',	'IL-5 pg/ml',	'IL-6 pg/ml',	'IL-7 pg/ml', 'IL-8 pg/ml', 'TNFa pg/ml', 'TNFb pg/ml']
+
+
+
+def seed_everything(seed: int):
+    import random, os
+    import numpy as np
+    import torch
+    
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = True
+
 
 
 def plot_roc_curve(fper, tper):
@@ -48,18 +65,18 @@ def plot_roc_curve(fper, tper):
     max_ = 0
     averx,avery = 0,0
     for i in range(6,len(fper)):
-    	if fper[i] < 0.35: continue
+    	if fper[i] < 0.4: continue
     	if tper[i]/fper[i] > max_: 
     		maxindex = i
     		max_ = tper[i]/fper[i]
     		print(max_)
-    print(' -------------------------------------------- the best perfoance at ',maxindex,fper[maxindex],tper[maxindex])
+    print(' -------------------------------------------- the best perfoance at ',maxindex,1-fper[maxindex],tper[maxindex])
     
     plt.plot([0, 1], [0, 1], color='green', linestyle='--')
     plt.xlabel('Rate of incorrect recognition of health people')
     plt.ylabel('Rate of correct recognition of patients')
-    plt.title('Receiver Operating Characteristic Curve')
-    plt.plot([fper[maxindex]],[tper[maxindex]],marker='*', markersize=15)
+    #plt.title('Receiver Operating Characteristic Curve')
+    plt.plot([fper[maxindex]],[tper[maxindex]],marker='*', markersize=15+np.random.randint(-3,3))
     return (fper[maxindex],tper[maxindex])
 
 
@@ -73,7 +90,7 @@ def cross_valid(len,train_ratio = 0.8):
         ind_l = nvalid*i
         ind_h = ind_l + nvalid
         if ind_h > len: ind_h = len
-        print(ind_l,ind_h)
+        #print(ind_l,ind_h)
         valid = indices[ind_l:ind_h]
         train = set(indices) - set(valid)
         valid = np.array(list(valid))
@@ -151,8 +168,9 @@ def low_correlation(dataset):
     names = []
     for col in colum:
         corr = np.corrcoef(dataset[col], dataset['res'])[0,1]
-        names.append(col)
+        names.append(col.replace("pg/ml","").replace("/BB",""))
         res.append(corr)
+    print(names,res)
     return res,names
 
 def overlap(dataset,thres):
@@ -164,7 +182,7 @@ def overlap(dataset,thres):
         std1 = dataset[dataset['res']==0][col].std()
         std2 = dataset[dataset['res']==1][col].std()
         corr = np.abs(mean1-mean2)/(std1+std2)
-        print(corr)
+        #print(corr)
         if corr < thres: res.append(col)
     return res
 
@@ -181,17 +199,36 @@ def preprocess_nn(df,number):
            'IL-15 pg/ml', 'IL-17A pg/ml', 'IL-1RA pg/ml', 'IL-1a pg/ml', 'IL-9 pg/ml', 'IL-1b pg/ml', 'IL-2 pg/ml',
            'IL-3 pg/ml', 'IL-4 pg/ml', 'IL-5 pg/ml', 'IL-6 pg/ml', 'IL-7 pg/ml', 'IL-8 pg/ml', 'TNFa pg/ml',
            'TNFb pg/ml']
+
     print(df.columns)
     rest_for_df = list(set(df.columns) - set(fyr) - set([target]))
-    #rest_for_df = ['Пол','BDNF, ng/ml','PAI-1(total), ng/ml']
+    rest_for_df = ['Пол','BDNF, ng/ml','PAI-1(total), ng/ml', 'RANTES pg/ml', 'VEGF pg/ml ', 'Fractalkine pg/ml'] 
     for col in rest_for_df:
         df = df.drop(col, axis=1)
+    
+    df_null = df[df.isnull().any(axis=1)]
+    print('df_null.shape = ', df_null.shape)
+    for el in df.columns:
+        df = df.loc[df[el].notnull()]
+    print('===================')
+
+    rest_for_df = []
+    if number!= -1:
+        #print(df.columns)
+        for k in range(number+1,38):
+            #print(k, rest_for_df)
+            rest_for_df.append(df.columns[k])
+            #print(df.columns)
+    for col in rest_for_df:
+        df = df.drop(col, axis=1)
+
     file = open(filename, 'a+')
     file.write(f'{df.columns[number]} ')
     file.close()
-    if number!= -1: df = df.drop(df.columns[number], axis=1)
+    #if number!= -1: df = df.drop(df.columns[number], axis=1)
     df = df.astype('float')
     return df
+
 
 
 def uniform(df):
@@ -238,7 +275,6 @@ def process_df(number):
 
     print(df_schizo.shape,df_control.shape)
     print('df_schizo.columns = ', df_schizo.columns)
-
     print('=============================================')
 
     print('--------------- INITIAL DATA ANALYSIS ----------------')
@@ -250,28 +286,22 @@ def process_df(number):
    # describe(df_control[df_control_null])
    # describe(df_schizo[df_schizo_null])
     print('=============================================')
-
-
-
   #  df_control = df_control[df_control_null]
   #  df_schizo = df_schizo[df_schizo_null]
     print('combine patients and control')
-    df = df_schizo.append(df_control, ignore_index=True)
+    df = df_schizo._append(df_control, ignore_index=True)
 
     df = preprocess_nn(df,number)
 
-    df_null = df[df.isnull().any(axis=1)]
-    print('df_null.shape = ', df_null.shape)
-    for el in df.columns:
-        df = df.loc[df[el].notnull()]
+
     print('df.shape = ',df.shape)
     print('df.columns = ',df.columns)
     print('===================')
     #df.fillna(0,inplace=True)
 
-
-
     return df
+
+
 
 def draw_correlation(df):
     # high_overl = overlap(df, 0.1)
@@ -315,10 +345,7 @@ def perform(name_save, input_tensor, label_tensor, logist = False):
 
     criterion1 = torch.nn.MSELoss()  #  torch.nn.BCELoss() # BLE # MSE
     optimizer1 = torch.optim.Adam(model1.parameters(), lr=LR, weight_decay=0.01)
-    # Работа SGD в данном случае эквивалента обычному GD, так как функция ошибок и градиенты считаются для каждой строки.
     scheduler1 = torch.optim.lr_scheduler.ExponentialLR(optimizer1, gamma=Gamma_Scheduler)
-
-
     num_of_parameters = sum(map(torch.numel, model1.parameters()))
     list_par_before = []
     for p in model1.parameters():
@@ -332,6 +359,7 @@ def perform(name_save, input_tensor, label_tensor, logist = False):
     weight = []
     optimizer1.zero_grad()
     lrs = []
+    cycle = 0;
     try:
         stream_hist = open("results/" + name_save + ".dat",'w')
     except:
@@ -370,13 +398,15 @@ def perform(name_save, input_tensor, label_tensor, logist = False):
                 scheduler1.step()
                 loss_v += loss.item()
                 stream_hist.write(f'{loss_v/(aver_v+1)} {label.item()} {output[0]} {optimizer1.param_groups[0]["lr"]}\n')
-                print(f'epoch = {epoch}', format(t / input_tensor.shape[0], '.2f'),
-                      'leraning rate = ', format(optimizer1.param_groups[0]["lr"], '.6f'),
-                      'loss = ', format(loss.item(), '.6f'),
-                      'NN_output = ', format(output.item(), '.6f'),
-                      'target = ', label.item(), "  aver_loss = ", aver_loss)
+                cycle+=1
+                if cycle%100==0:
+                    print(f'epoch = {epoch}', format(t / input_tensor.shape[0], '.2f'),
+                        'leraning rate = ', format(optimizer1.param_groups[0]["lr"], '.6f'),
+                        'loss = ', format(loss.item(), '.6f'),
+                        'NN_output = ', format(output.item(), '.6f'),
+                        'target = ', label.item(), "  aver_loss = ", aver_loss)
                 aver_loss = 0.95*aver_loss + loss_v/(aver_v+1)/20.
-                if aver_loss < 0.10:
+                if aver_loss < 0.05:
                     break_now = True
                     break
                 loss_v = 0
@@ -390,6 +420,8 @@ def perform(name_save, input_tensor, label_tensor, logist = False):
                 variant = False
             else:
                 variant = True
+
+
 
     torch.save(model1.state_dict(),"results/" + name_save + ".pth")
             
@@ -438,20 +470,24 @@ def validate(df,logist):
     dset = cross_valid(len(df), split_train_valid_test)
     model1 = NNModel(len(df.columns) - 1,logist)
     i = 0
-    min_health, max_shcizo = 0,0
+    min_health, max_shcizo = [],[]
     vect0,vect1 = [],[]
     for el in dset:
         set_ = dataset_to_torch(df, el[0], el[1])
-        print(set_)
+        #print(set_)
         model1.load_state_dict(torch.load(f"results/{i}.pth"))
-
+        #model1.to
         #matr = model1.parameters()
         #for matr_el in matr:
         #    print(matr_el.shape)
         #    plt.imshow(matr_el.detach().numpy())
         #    plt.colorbar()
         #    plt.show()
-
+        #device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        #print("Device:", device)    
+        #model1.to(device)
+        #print(next(model1.parameters()).device)
+        #model1 = model1.to('cuda:0')
         #summary(model1, (1, set_[2].shape[1]))
 
         s1 = set_[1]
@@ -465,12 +501,11 @@ def validate(df,logist):
         model_input = set_[2]
         s2 = model1(model_input)
 
-        criterion1 = torch.nn.MSELoss()
         label = s1
         label = label.to(torch.float32)
         output = s2
         output = output.to(torch.float32)
-        los = criterion1(output[0], label).item()
+        #los = criterion1(output[0], label).item()
 
         print('======================')
         print('total number of validation dataset = ',len(s1))
@@ -487,23 +522,27 @@ def validate(df,logist):
         s2 = s2.cpu().detach().numpy()
         fper, tper, thresholds = roc_curve(s1, s2)
         mk = plot_roc_curve([fper], [tper])
-        min_health += mk[0]
-        max_shcizo += mk[1]
+        min_health.append(1-mk[0])
+        max_shcizo.append(mk[1])
+
+        del set_
         i+=1
 
     plt.show()
     plt.hist(vect0, histtype='bar', bins=50, label='health')
     plt.hist(vect1, histtype='step', bins=50, label='patients')
-    min_health /= i
-    max_shcizo /= i
-    print('inaccuracy_control = ',min_health)
-    print('accuracy_patients = ',max_shcizo)
-    file.write(f'{min_health} {max_shcizo} \n')
+    min_health = np.array(min_health)
+    max_shcizo = np.array(max_shcizo)
+    print('accuracy_control = ','{:.2f}'.format(min_health.mean()), "+/-", '{:.2f}'.format(min_health.std()))
+    print('accuracy_patients = ', '{:.2f}'.format(max_shcizo.mean()), "+/-", '{:.2f}'.format(max_shcizo.std()))
+    file.write(f'{min_health.mean()} {max_shcizo.mean()} \n')
     file.close()
     plt.xlabel('model output')
     plt.ylabel('#test events')
     plt.legend()
     plt.show()
+
+
 
 
 
@@ -551,38 +590,43 @@ def make_NN(train = True, logist = False, number=-1):
     df = process_df(number)
 
     #plt.xscale('log')
-    plt.hist(df[df.columns[7]].loc[df['res'] == 1],bins= 40, range = (-0.001,40),density=True,label='shizo')
-    plt.hist(df[df.columns[7]].loc[df['res'] == 0],bins= 40, range = (-0.001,40),density=True,fc=(0.3, 0.3, 0.3, 0.36),label='health')
-    plt.xlabel(df.columns[7])
-    plt.legend()
+    #numer = 9
+    #min_ = df[df.columns[numer]].min()
+    #max_ = df[df.columns[numer]].max()
+    #plt.hist(df[df.columns[numer]].loc[df['res'] == 1],bins= 40, range = (min_,max_),density=True,label='shizo')
+    #plt.hist(df[df.columns[numer]].loc[df['res'] == 0],bins= 40, range = (min_,max_),density=True,fc=(0.3, 0.3, 0.3, 0.36),label='health')
+    #plt.xlabel(df.columns[numer])
+    #plt.legend()
     #plt.show()
 
     #
     correlation_w_res = low_correlation(df)
     plt.bar(correlation_w_res[1],correlation_w_res[0])
     plt.xticks(rotation=45)
-    #plt.show()
+    plt.show()
     #
-    plot_data(df)
+    #plot_data(df)
     #
     df = uniform(df)
     #
-    print(df.columns)
+    #print(df.columns)
     dset = cross_valid(len(df), split_train_valid_test)
     print("============================ split ====================== ")
-    for el in dset:
-        print(len(el[0]), len(el[1]))
-        print("============================ end split ====================== ")
+    #for el in dset:
+    #    print(len(el[0]), len(el[1]))
+    #    print("============================ end split ====================== ")
 
     #draw_correlation(df)
     
     if train: make(df,logist)
-    draw_history()
+    #draw_history()
     validate(df,logist)
     
     #print(cross_valid(10,0.8))
     
     #make_grad()
+
+    del df
 
 
 def make_DTrees(number):
@@ -594,28 +638,6 @@ def make_DTrees(number):
     #file.write(f'{df.columns[number]} ')
     i = 0
     feature_cols = ['res']
-    fyr = ['TGFa pg/ml',
-           'IFNa2 pg/ml',
-           'IFNg pg/ml',
-           'IL-10 pg/ml',
-           'IL-12P40 pg/ml',
-           'IL-12P70 pg/ml',
-           'IL-13 pg/ml',
-           'IL-15 pg/ml',
-           'IL-17A pg/ml',
-           'IL-1RA pg/ml',
-           'IL-1a pg/ml',
-           'IL-9 pg/ml',
-           'IL-1b pg/ml',
-           'IL-2 pg/ml',
-           'IL-3 pg/ml',
-           'IL-4 pg/ml',
-           'IL-5 pg/ml',
-           'IL-6 pg/ml',
-           'IL-7 pg/ml',
-           'IL-8 pg/ml',
-           'TNFa pg/ml',
-           'TNFb pg/ml']
     
     accur_health_, accur_schizo_ = 0,0
     accur_health, accur_schizo = [],[]
@@ -624,25 +646,27 @@ def make_DTrees(number):
         set_ = dataset_to_torch(df, el[0], el[1])
         n_h = len(set_[1][set_[1]==0])
         n_sc = len(set_[1][set_[1] == 1])
-        wei = n_sc/n_h*2
-        weight = {0: wei, 1: 1}
-        clf = tree.DecisionTreeClassifier(criterion="gini", max_depth = int(len(df.columns)/2), class_weight = weight)
+        wei = n_sc/n_h
+        weight = {0: 1, 1: wei}
 
+        clf = tree.DecisionTreeClassifier(criterion="gini", max_depth = 8, class_weight = weight) #int(len(df.columns)/2), class_weight = weight)
+        clf = RandomForestClassifier(random_state=5, n_jobs=-1, n_estimators=3, class_weight = weight);
         print('n_h = ',n_h)
         print('n_sc = ',n_sc)
-        #clf = svm.SVC(C = 2, kernel = 'poly', class_weight=weight, max_iter = -1, degree=3)
-        #clf = KNeighborsClassifier(n_neighbors=2)
-        pca = PCA(n_components=len(df.columns)-1)  # https://stackabuse.com/implementing-pca-in-python-with-scikit-learn/
-        X_train = pca.fit_transform(set_[0])
+        weight = {0: wei*2, 1: 1}
+        clf = svm.SVC(C = 2, kernel = 'poly', class_weight=weight, max_iter = -1, degree=3)
+        clf = KNeighborsClassifier(n_neighbors=2)
+        #pca = PCA(n_components=len(df.columns)-1-10)  # https://stackabuse.com/implementing-pca-in-python-with-scikit-learn/
+        X_train = set_[0]
         #X_test = pca.transform(set_[2])
-        print(pca.explained_variance_ratio_)
-        print(pca)
+        #print(pca.explained_variance_ratio_)
+        #print(pca)
         #clf = clf.fit(set_[0], set_[1])
-        clf = clf.fit(X_train, set_[1])
+        clf = clf.fit(set_[0], set_[1])
         
-        set2_0 = pca.transform(set_[2][set_[3] == 0])
+        set2_0 = set_[2][set_[3] == 0]
         set3_0 = set_[3][set_[3] == 0]
-        set2_1 = pca.transform(set_[2][set_[3] == 1])
+        set2_1 = set_[2][set_[3] == 1]
         set3_1 = set_[3][set_[3] == 1]
         accur_health_ = clf.score(set2_0, set3_0)
         accur_schizo_ = clf.score(set2_1, set3_1)
@@ -651,10 +675,10 @@ def make_DTrees(number):
         accur_health.append(accur_health_)
         accur_schizo.append(accur_schizo_)
 
-        print(classification_report(set_[3], clf.predict(pca.transform(set_[2]))))
-        print(confusion_matrix(set_[3], clf.predict(pca.transform(set_[2]))))
+        print(classification_report(set_[3], clf.predict(set_[2])))
+        print(confusion_matrix(set_[3], clf.predict(set_[2])))
         print('===========================')
-        #dot_data = StringIO()
+        dot_data = StringIO()
         #export_graphviz(clf, out_file=dot_data,  
         #                filled=True, rounded=True,feature_names = fyr,
         #        special_characters=True, class_names=['0','1'])
@@ -663,7 +687,7 @@ def make_DTrees(number):
         #Image(graph.create_png())
         i+=1
 
-    print('inaccuracy_health = ', round(1 - np.mean(accur_health),3),'+/-',round(np.std(accur_health),3))
+    print('accuracy_health = ', round(np.mean(accur_health),3),'+/-',round(np.std(accur_health),3))
     print('accuracy_schizo = ', round(np.mean(accur_schizo),3),'+/-',round(np.std(accur_schizo),3))
     #file.write(f' {accur_health} {accur_schizo} \n')
     bin = 0
@@ -688,16 +712,31 @@ def plot_file(name_f):
     df.iloc[:,:-1].plot(kind="bar", figsize = (2, 4))
     plt.show()
 
+def analyze_database():
+    df = process_df(number=-1)
+
+    print("Больных женщин ", len(df[df["res"]==1][df["Пол"]=="F"]))
+    print("Больных мужчин ", len(df[df["res"]==1][df["Пол"]=="M"]))
+    print("Здоровых женщин ", len(df[df["res"]==0][df["Пол"]=="F"]))
+    print("Здоровых мужчин ", len(df[df["res"]==0][df["Пол"]=="M"]))
+
+     
+    df1= df[df["res"]==1]["Возраст"]
+    print("Возраст больных mean std min max ", df1.mean(), df1.std(), df1.min(), df1.max())
+    df1 = df[df["res"]==0]["Возраст"]
+    print("Возраст здоровых mean std min max ", df1.mean(), df1.std(), df1.min(), df1.max())
+
 if __name__=='__main__':
+    seed_everything(42)
     #for i in range(-1,0):
     #    make_DTrees(i)
     #make_DTrees(-1)
-    #for i in range(-1, 42):
+    
+    #for i in range(2,39):
+    #    seed_everything(42)
     #    make_NN(train = True, logist = False, number=i)
+    
     #plot_file('NN.dat')
-    make_NN(train=True, logist=False, number=-1)
-
-
-
-
-
+    make_NN(train=False, logist=True, number=38)
+    #draw_history()
+    #analyze_database()
